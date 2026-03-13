@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Soccer Free Move - Turbo Edition</title>
+    <style>
+        body {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            height: 100vh; margin: 0; background-color: #050505; font-family: 'Segoe UI', sans-serif;
+            color: white; overflow: hidden; touch-action: none;
+        }
+        .scoreboard {
+            display: flex; gap: 40px; font-size: 32px; font-weight: bold; margin-bottom: 20px;
+            background: rgba(0,0,0,0.8); padding: 15px 60px; border-radius: 50px;
+            border: 3px solid #f1c40f; box-shadow: 0 0 20px rgba(241,196,15,0.5);
+        }
+        #game-container { position: relative; border: 6px solid #fff; border-radius: 10px; overflow: hidden; }
+        canvas { background-color: #1b5e20; display: block; }
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); display: flex; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 100;
+        }
+        .btn {
+            padding: 18px 50px; font-size: 24px; cursor: pointer; border-radius: 50px;
+            border: none; background: #f1c40f; font-weight: bold; transition: 0.3s;
+        }
+        .btn:hover { transform: scale(1.1); background: #fff; }
+        #goal-msg {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 90px; font-weight: 900; color: #f1c40f; text-shadow: 0 0 20px #000;
+            display: none; z-index: 50; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="scoreboard">
+        <span style="color: #3498db;">כחול: <span id="s1">0</span></span>
+        <span style="color: #e74c3c;">אדום: <span id="s2">0</span></span>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="900" height="500"></canvas>
+        <div id="goal-msg">גווווול!</div>
+        
+        <div id="menu-overlay" class="overlay">
+            <h1 style="font-size: 60px; color: #f1c40f;">SUPER SOCCER PRO</h1>
+            <p>חופש תנועה מלא! רווח/עכבר לטורבו אש</p>
+            <button class="btn" onclick="startGame('ai')">נגד המחשב</button>
+            <div style="height: 15px;"></div>
+            <button class="btn" onclick="startGame('pvp')">נגד חבר</button>
+        </div>
+
+        <div id="win-overlay" class="overlay" style="display: none;">
+            <h1 id="win-text" style="font-size: 50px;"></h1>
+            <button class="btn" onclick="location.reload()">שחק שוב</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        let score1 = 0, score2 = 0, gameActive = false, gameMode = '';
+        const ballParticles = [];
+
+        const p1 = { x: 150, y: 250, r: 24, color: "#3498db", baseSpeed: 8 };
+        const p2 = { x: 750, y: 250, r: 24, color: "#e74c3c", baseSpeed: 8 };
+        const ball = { x: 450, y: 250, r: 13, dx: 0, dy: 0, friction: 0.985 };
+
+        function playSfx(f, d, type='sine') {
+            try {
+                let o = audioCtx.createOscillator(), g = audioCtx.createGain();
+                o.type = type; o.frequency.value = f;
+                g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + d);
+                o.connect(g); g.connect(audioCtx.destination);
+                o.start(); o.stop(audioCtx.currentTime + d);
+            } catch(e){}
+        }
+
+        const keys = {};
+        window.addEventListener("keydown", e => { 
+            keys[e.code] = true; 
+            if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault(); 
+        });
+        window.addEventListener("keyup", e => keys[e.code] = false);
+
+        let isMouseDown = false;
+        window.addEventListener("mousedown", () => isMouseDown = true);
+        window.addEventListener("mouseup", () => isMouseDown = false);
+
+        canvas.addEventListener("mousemove", e => {
+            if (gameMode === 'pvp' && gameActive) {
+                const rect = canvas.getBoundingClientRect();
+                p2.x = Math.max(canvas.width/2 + p2.r, Math.min(canvas.width - p2.r, e.clientX - rect.left));
+                p2.y = Math.max(p2.r, Math.min(canvas.height - p2.r, e.clientY - rect.top));
+            }
+        });
+
+        function startGame(mode) {
+            audioCtx.resume();
+            gameMode = mode;
+            document.getElementById("menu-overlay").style.display = "none";
+            gameActive = true;
+            loop();
+        }
+
+        function update() {
+            if (!gameActive) return;
+
+            // שחקן 1
+            let p1Turbo = keys["Space"];
+            let s1 = p1Turbo ? p1.baseSpeed * 1.5 : p1.baseSpeed;
+            if (keys["ArrowUp"] && p1.y > p1.r) p1.y -= s1;
+            if (keys["ArrowDown"] && p1.y < canvas.height - p1.r) p1.y += s1;
+            if (keys["ArrowLeft"] && p1.x > p1.r) p1.x -= s1;
+            if (keys["ArrowRight"] && p1.x < canvas.width/2 - p1.r) p1.x += s1;
+
+            // שחקן 2 (AI)
+            if (gameMode === 'ai') {
+                let s2 = p2.baseSpeed * 0.9;
+                if (ball.y > p2.y + 10) p2.y += s2;
+                if (ball.y < p2.y - 10) p2.y -= s2;
+                let targetX = ball.x > canvas.width/2 ? ball.x + 20 : 800;
+                if (p2.x < targetX) p2.x += 5; else p2.x -= 5;
+            }
+
+            // הגבלת גבולות קשיחה
+            [p1, p2].forEach(p => {
+                p.x = Math.max(p.r, Math.min(canvas.width - p.r, p.x));
+                p.y = Math.max(p.r, Math.min(canvas.height - p.r, p.y));
+            });
+
+            // כדור
+            ball.x += ball.dx; ball.y += ball.dy;
+            ball.dx *= ball.friction; ball.dy *= ball.friction;
+
+            // אפקט אש
+            if (Math.abs(ball.dx) > 9) {
+                ballParticles.push({x: ball.x, y: ball.y, r: Math.random()*8 + 2, life: 1});
+            }
+
+            // התנגשות
+            [p1, p2].forEach(p => {
+                let dx = ball.x - p.x, dy = ball.y - p.y;
+                let dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist < p.r + ball.r) {
+                    let turbo = (p === p1 && keys["Space"]) || (p === p2 && (isMouseDown || gameMode === 'ai' && Math.random() > 0.8));
+                    let angle = Math.atan2(dy, dx);
+                    let power = turbo ? 22 : 14;
+                    ball.dx = Math.cos(angle) * power;
+                    ball.dy = Math.sin(angle) * power;
+                    playSfx(turbo ? 400 : 200, 0.2, turbo ? 'sawtooth' : 'sine');
+                }
+            });
+
+            // קירות
+            if (ball.y <= ball.r || ball.y >= canvas.height - ball.r) {
+                ball.dy *= -1;
+                ball.y = ball.y <= ball.r ? ball.r + 2 : canvas.height - ball.r - 2;
+            }
+
+            // שערים (170 עד 330)
+            if (ball.x < 0) {
+                if (ball.y > 170 && ball.y < 330) score(2);
+                else { ball.dx *= -1; ball.x = ball.r; }
+            }
+            if (ball.x > canvas.width) {
+                if (ball.y > 170 && ball.y < 330) score(1);
+                else { ball.dx *= -1; ball.x = canvas.width - ball.r; }
+            }
+
+            // עדכון אש
+            for(let i=ballParticles.length-1; i>=0; i--) {
+                ballParticles[i].life -= 0.05;
+                if(ballParticles[i].life <= 0) ballParticles.splice(i, 1);
+            }
+        }
+
+        function score(p) {
+            gameActive = false;
+            p === 1 ? score1++ : score2++;
+            document.getElementById("s1").innerText = score1;
+            document.getElementById("s2").innerText = score2;
+            document.getElementById("goal-msg").style.display = "block";
+            playSfx(150, 0.7, 'square');
+            setTimeout(() => {
+                document.getElementById("goal-msg").style.display = "none";
+                if (score1 >= 5 || score2 >= 5) {
+                    document.getElementById("win-overlay").style.display = "flex";
+                    document.getElementById("win-text").innerText = (score1 >= 5 ? "כחול" : "אדום") + " ניצח!";
+                } else {
+                    ball.x = 450; ball.y = 250; ball.dx = 0; ball.dy = 0;
+                    gameActive = true;
+                }
+            }, 1500);
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // מגרש
+            ctx.fillStyle = "#1b5e20"; ctx.fillRect(0,0,900,500);
+            ctx.strokeStyle = "rgba(255,255,255,0.3)"; ctx.lineWidth = 4;
+            ctx.strokeRect(10,10,880,480);
+            ctx.beginPath(); ctx.moveTo(450,10); ctx.lineTo(450,490); ctx.stroke();
+            ctx.beginPath(); ctx.arc(450,250,75,0,7); ctx.stroke();
+            
+            // שערים
+            ctx.fillStyle = "white"; ctx.fillRect(0, 170, 10, 160); ctx.fillRect(890, 170, 10, 160);
+
+            // אש
+            ballParticles.forEach(p => {
+                ctx.fillStyle = `rgba(255, ${p.life*100}, 0, ${p.life})`;
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+            });
+
+            // שחקנים
+            [p1, p2].forEach(p => {
+                ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+                ctx.strokeStyle = "white"; ctx.lineWidth = 3; ctx.stroke();
+            });
+
+            // כדור
+            ctx.fillStyle = "white"; ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, 7); ctx.fill();
+        }
+
+        function loop() { update(); draw(); requestAnimationFrame(loop); }
+    </script>
+</body>
+</html>
